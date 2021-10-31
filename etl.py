@@ -11,9 +11,12 @@ def load_staging_tables(cur, conn):
         cur (_cursor): cursor of DB connection
         conn (connection):: DB connection
     """
-    for query in copy_table_queries:
-        cur.execute(query)
-        conn.commit()
+    try:
+        for query in copy_table_queries:
+            cur.execute(query)
+            conn.commit()
+    except Exception as e:
+        print(query, e)
 
 
 def insert_tables(cur, conn):
@@ -24,9 +27,12 @@ def insert_tables(cur, conn):
         cur (_cursor): cursor of DB connection
         conn (connection):: DB connection
     """
-    for query in insert_table_queries:
-        cur.execute(query)
-        conn.commit()
+    try:
+        for query in insert_table_queries:
+            cur.execute(query)
+            conn.commit()
+    except Exception as e:
+        print (query, e)
 
 
 def main():
