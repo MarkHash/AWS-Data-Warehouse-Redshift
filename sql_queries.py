@@ -13,7 +13,7 @@ DB_PASSWORD = config['CLUSTER']['DB_PASSWORD']
 DB_PORT = config['CLUSTER']['DB_PORT']
 
 #config['IAM_ROLE']
-ARN = config['IAM_ROLE']
+ARN = config['IAM_ROLE']['ARN']
 
 #config['S3']
 LOG_DATA = config['S3']['LOG_DATA']
@@ -22,21 +22,21 @@ SONG_DATA = config['S3']['SONG_DATA']
 
 # DROP TABLES
 
-staging_events_table_drop = "DROP TABLE IF EXISTS stagint_events;"
+staging_events_table_drop = "DROP TABLE IF EXISTS staging_events;"
 staging_songs_table_drop = "DROP TABLE IF EXISTS staging_songs;"
-songplay_table_drop = "DROP TABLE IF EXISTS songplay;"
-user_table_drop = "DROP TABLE IF EXISTS user;"
-song_table_drop = "DROP TABLE IF EXISTS song;"
-artist_table_drop = "DROP TABLE IF EXISTS artist;"
+songplay_table_drop = "DROP TABLE IF EXISTS songplays;"
+user_table_drop = "DROP TABLE IF EXISTS users;"
+song_table_drop = "DROP TABLE IF EXISTS songs;"
+artist_table_drop = "DROP TABLE IF EXISTS artists;"
 time_table_drop = "DROP TABLE IF EXISTS time;"
 
 # CREATE TABLES
 
 staging_events_table_create= ("""
-CREATE TABLE staging_events(
+CREATE TABLE IF NOT EXISTS staging_events(
     artist          VARCHAR,
     auth            VARCHAR,
-    fistName        VARCHAR,
+    firstname       VARCHAR,
     gender          VARCHAR,
     iteminsession   INTEGER,
     lastname        VARCHAR,
@@ -45,23 +45,23 @@ CREATE TABLE staging_events(
     location        VARCHAR,
     method          VARCHAR,
     page            VARCHAR,
-    registration    INTEGER,
+    registration    VARCHAR,
     sessionid       INTEGER,
     song            VARCHAR,
     status          INTEGER,
-    ts              INTEGER,
+    ts              BIGINT NOT NULL,
     useragent       VARCHAR,
     userid          INTEGER);
 """)
 
 staging_songs_table_create = ("""
-CREATE TABLE staging_songs(
+CREATE TABLE IF NOT EXISTS staging_songs(
     num_songs           INTEGER,
     artist_id           VARCHAR,
     artist_latitude     VARCHAR,
     artist_longitude    VARCHAR,
-    artist_location     VARCHAR,
-    artist_name         VARCHAR,
+    artist_location     VARCHAR(MAX),
+    artist_name         VARCHAR(MAX),
     song_id             VARCHAR,
     title               VARCHAR,
     duration            FLOAT,
@@ -69,21 +69,21 @@ CREATE TABLE staging_songs(
 """)
 
 songplay_table_create = ("""
-CREATE TABLE songplays(
-    songplay_id     IDENTITY(0,1) NOT NULL,
+CREATE TABLE IF NOT EXISTS songplays(
+    songplay_id     INTEGER IDENTITY(0,1) PRIMARY KEY,
     start_time      TIMESTAMP,
     user_id         INTEGER NOT NULL,
     level           VARCHAR,
     song_id         VARCHAR NOT NULL,
     artist_id       VARCHAR NOT NULL,
     session_id      INTEGER NOT NULL,
-    locatioin       VARCHAR,
+    location        VARCHAR(MAX),
     user_agent      VARCHAR);
 """)
 
 user_table_create = ("""
-CREATE TABLE users(
-    user_id     INTEGER NOT NULL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS users(
+    user_id     INTEGER PRIMARY KEY,
     first_name  VARCHAR,
     last_name   VARCHAR,
     gender      VARCHAR,
@@ -91,7 +91,7 @@ CREATE TABLE users(
 """)
 
 song_table_create = ("""
-CREATE TABLE songs(
+CREATE TABLE IF NOT EXISTS songs(
     song_id     VARCHAR PRIMARY KEY,
     title       VARCHAR,
     artist_id   VARCHAR,
@@ -100,16 +100,16 @@ CREATE TABLE songs(
 """)
 
 artist_table_create = ("""
-CREATE TABLE artists(
+CREATE TABLE IF NOT EXISTS artists(
     artist_id   VARCHAR PRIMARY KEY,
-    name        VARCHAR
-    location    VARCHAR
+    name        TEXT,
+    location    VARCHAR,
     lattitude   NUMERIC,
     longitude   NUMERIC);
 """)
 
 time_table_create = ("""
-CREATE TABLE time(
+CREATE TABLE IF NOT EXISTS time(
     start_time  TIMESTAMP PRIMARY KEY,
     hour        INTEGER,
     day         INTEGER,
@@ -123,25 +123,35 @@ CREATE TABLE time(
 
 staging_events_copy = ("""
 COPY staging_events from {}
-credentials 'aws_iam_role= {}'
+credentials 'aws_iam_role={}'
 json {} compupdate on region 'us-west-2';
 """).format(LOG_DATA, ARN, LOG_JSONPATH)
 
 staging_songs_copy = ("""
 COPY staging_songs from {}
-credentials 'aws_iam_role= {}'
-json 'auto compupdate on region 'us-west-2';
+credentials 'aws_iam_role={}'
+json 'auto' compupdate off region 'us-west-2';
 """).format(SONG_DATA, ARN)
 
 # FINAL TABLES
 
 songplay_table_insert = ("""
-INSERT INTO songplay(start_time, user_id, level, song_id, artist_id, session_id, locatioin, user_agent)
-
+INSERT INTO songplays(start_time, user_id, level, song_id, artist_id, session_id, location, user_agent)
+SELECT  timestamp 'epoch' + (e.ts / 1000) * interval '1 second' AS start_time,
+        e.userid,
+        e.level,
+        s.song_id,
+        s.artist_id,
+        e.sessionid,
+        e.location,
+        e.useragent
+FROM staging_events e
+JOIN songs s ON (e.song = s.title)
+WHERE e.page='NextSong'
 """)
 
 user_table_insert = ("""
-INSERT INTO user(user_id, first_name, last_name, gender, level)
+INSERT INTO users(user_id, first_name, last_name, gender, level)
 SELECT  userid,
         firstname,
         lastname,
@@ -152,7 +162,7 @@ WHERE page='NextSong'
 """)
 
 song_table_insert = ("""
-INSERT INTO song(song_id, title, artist_id, year, duration)
+INSERT INTO songs(song_id, title, artist_id, year, duration)
 SELECT  song_id,
         title,
         artist_id,
@@ -162,7 +172,7 @@ FROM staging_songs
 """)
 
 artist_table_insert = ("""
-INSERT INTO artist(artist_id, name, location, lattitude, longitude)
+INSERT INTO artists(artist_id, name, location, lattitude, longitude)
 SELECT  artist_id,
         artist_name,
         artist_location,
@@ -173,14 +183,14 @@ FROM staging_songs
 
 time_table_insert = ("""
 INSERT INTO time(start_time, hour, day, week, month, year, weekday)
-SELECT  ts,
-        EXTRCT(hour FROM ts)    AS hour,
-        EXTRCT(day FROM ts)     AS day,
-        EXTRCT(week FROM ts)    AS week,
-        EXTRCT(month FROM ts)   AS month,
-        EXTRCT(year FROM ts)    AS year,
-        CASE WHEN EXTRCT(ISODOW FROM ts) IN (1, 5) THEN true ELSE false END AS weekday
-FROM staging_events
+SELECT  start_time AS start_time,
+        EXTRACT(hour FROM start_time)    AS hour,
+        EXTRACT(day FROM start_time)     AS day,
+        EXTRACT(week FROM start_time)    AS week,
+        EXTRACT(month FROM start_time)   AS month,
+        EXTRACT(year FROM start_time)    AS year,
+        EXTRACT(weekday FROM start_time) AS weekday
+FROM (SELECT timestamp 'epoch' + (e.ts / 1000) * interval '1 second' AS start_time FROM staging_events e)
 """)
 
 # QUERY LISTS
